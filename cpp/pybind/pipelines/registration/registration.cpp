@@ -777,6 +777,15 @@ void pybind_registration_methods(py::module &m) {
           "T_V_to_S"_a = Eigen::Matrix4d::Identity());
     docstring::FunctionDocInject(m, "registration_doppler_icp",
                                  map_shared_argument_docstrings);
+    m.def("registration_doppler_velocity_icp", &RegistrationDopplerVelocityICP,
+          py::call_guard<py::gil_scoped_release>(),
+          "Function for Doppler Velocity ICP registration", "source"_a, "target"_a,
+          "source_directions"_a, "target_directions"_a, "max_correspondence_distance"_a,
+          "init"_a = Eigen::Matrix4d::Identity(),
+          "estimation_method"_a = TransformationEstimationForDopplerICP(0.99),
+          "criteria"_a = ICPConvergenceCriteria());
+    docstring::FunctionDocInject(m, "registration_doppler_velocity_icp",
+                                 map_shared_argument_docstrings);
 
     m.def("registration_generalized_icp", &RegistrationGeneralizedICP,
           "Function for Generalized ICP registration", "source"_a, "target"_a,

@@ -94,11 +94,10 @@ public:
     Eigen::Matrix4d ComputeTransformation(
             const geometry::PointCloud &source,
             const geometry::PointCloud &target,
-            const CorrespondenceSet &corres,
             const std::vector<Eigen::Vector3d> &source_directions,
-            const double period,
+            const std::vector<Eigen::Vector3d> &target_directions,
+            const CorrespondenceSet &corres,
             const Eigen::Matrix4d &transformation,
-            const Eigen::Matrix4d &T_V_to_S,
             const size_t iteration) const;
 
 public:
@@ -152,13 +151,12 @@ RegistrationResult RegistrationDopplerVelocityICP(
         const geometry::PointCloud &source,
         const geometry::PointCloud &target,
         const std::vector<Eigen::Vector3d> &source_directions,
-        double max_distance,
+        const std::vector<Eigen::Vector3d> &target_directions,
+        double max_correspondence_distance,
         const Eigen::Matrix4d &init = Eigen::Matrix4d::Identity(),
         const TransformationEstimationForDopplerVelocityICP &estimation =
                 TransformationEstimationForDopplerVelocityICP(),
-        const ICPConvergenceCriteria &criteria = ICPConvergenceCriteria(),
-        const double period = 0.1F,
-        const Eigen::Matrix4d &T_V_to_S = Eigen::Matrix4d::Identity());
+        const ICPConvergenceCriteria &criteria = ICPConvergenceCriteria());
 
 }  // namespace registration
 }  // namespace pipelines

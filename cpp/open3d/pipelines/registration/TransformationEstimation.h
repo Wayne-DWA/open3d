@@ -52,6 +52,7 @@ enum class TransformationEstimationType {
     ColoredICP = 3,
     GeneralizedICP = 4,
     DopplerICP = 5,
+    DopplerVelocityICP = 6
 };
 
 /// \class TransformationEstimation
