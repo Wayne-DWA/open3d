@@ -33,6 +33,7 @@
 #include "open3d/pipelines/registration/ColoredICP.h"
 #include "open3d/pipelines/registration/CorrespondenceChecker.h"
 #include "open3d/pipelines/registration/DopplerICP.h"
+#include "open3d/pipelines/registration/DopplerVelocityICP.h"
 #include "open3d/pipelines/registration/FastGlobalRegistration.h"
 #include "open3d/pipelines/registration/Feature.h"
 #include "open3d/pipelines/registration/GeneralizedICP.h"
@@ -387,7 +388,101 @@ Sets :math:`c = 1` if ``with_scaling`` is ``False``.
                     "doppler_kernel",
                     &TransformationEstimationForDopplerICP::doppler_kernel_,
                     "Robust Kernel used in the Doppler Error Optimization");
-
+    // open3d.registration.TransformationEstimationForDopplerVelocityICP:
+    // TransformationEstimation
+    py::class_<
+            TransformationEstimationForDopplerVelocityICP,
+            PyTransformationEstimation<TransformationEstimationForDopplerVelocityICP>,
+            TransformationEstimation>
+            te_dvop(m, "TransformationEstimationForDopplerVelocityICP",
+                   "Class to estimate a transformation between two point "
+                   "clouds using Doppler velocity information");
+    py::detail::bind_default_constructor<TransformationEstimationForDopplerVelocityICP>(
+            te_dvop);
+    py::detail::bind_copy_functions<TransformationEstimationForDopplerVelocityICP>(
+            te_dvop);
+    te_dvop.def(py::init([](double lambda_doppler, bool reject_dynamic_outliers,
+                           double doppler_outlier_threshold,
+                           size_t outlier_rejection_min_iteration,
+                           size_t geometric_robust_loss_min_iteration,
+                           size_t doppler_robust_loss_min_iteration,
+                           std::shared_ptr<RobustKernel> geometric_kernel,
+                           std::shared_ptr<RobustKernel> doppler_kernel) {
+                   return new TransformationEstimationForDopplerVelocityICP(
+                           lambda_doppler, reject_dynamic_outliers,
+                           doppler_outlier_threshold,
+                           outlier_rejection_min_iteration,
+                           geometric_robust_loss_min_iteration,
+                           doppler_robust_loss_min_iteration,
+                           std::move(geometric_kernel),
+                           std::move(doppler_kernel));
+               }),
+               "lambda_doppler"_a, "reject_dynamic_outliers"_a,
+               "doppler_outlier_threshold"_a,
+               "outlier_rejection_min_iteration"_a,
+               "geometric_robust_loss_min_iteration"_a,
+               "doppler_robust_loss_min_iteration"_a, "geometric_kernel"_a,
+               "doppler_kernel"_a)
+            .def(py::init([](double lambda_doppler) {
+                     return new TransformationEstimationForDopplerVelocityICP(
+                             lambda_doppler);
+                 }),
+                 "lambda_doppler"_a)
+            .def("compute_transformation",
+                 py::overload_cast<const geometry::PointCloud &,
+                                   const geometry::PointCloud &,
+                                   const std::vector<Eigen::Vector3d> &,
+                                   const std::vector<Eigen::Vector3d> &,
+                                   const CorrespondenceSet &,
+                                   const Eigen::Matrix4d &, const size_t>(
+                         &TransformationEstimationForDopplerVelocityICP::
+                                 ComputeTransformation,
+                         py::const_),
+                 "Compute transformation from source to target point cloud "
+                 "given correspondences.")
+            .def("__repr__",
+                 [](const TransformationEstimationForDopplerVelocityICP &te) {
+                     return std::string(
+                                    "TransformationEstimationForDopplerVelocityICP ") +
+                            ("with lambda_doppler=" +
+                             std::to_string(te.lambda_doppler_));
+                 })
+            .def_readwrite(
+                    "lambda_doppler",
+                    &TransformationEstimationForDopplerVelocityICP::lambda_doppler_,
+                    "lambda_doppler")
+            .def_readwrite("reject_dynamic_outliers",
+                           &TransformationEstimationForDopplerVelocityICP::
+                                   reject_dynamic_outliers_,
+                           "Performs dynamic point outlier rejection of "
+                           "correspondences")
+            .def_readwrite("doppler_outlier_threshold",
+                           &TransformationEstimationForDopplerVelocityICP::
+                                   doppler_outlier_threshold_,
+                           "doppler_outlier_threshold")
+            .def_readwrite("outlier_rejection_min_iteration",
+                           &TransformationEstimationForDopplerVelocityICP::
+                                   outlier_rejection_min_iteration_,
+                           "Minimum iterations after which the dynamic point "
+                           "outlier rejection is enabled")
+            .def_readwrite("geometric_robust_loss_min_iteration",
+                           &TransformationEstimationForDopplerVelocityICP::
+                                   geometric_robust_loss_min_iteration_,
+                           "Minimum iterations after which Robust Kernel is "
+                           "used for the Geometric error")
+            .def_readwrite("doppler_robust_loss_min_iteration",
+                           &TransformationEstimationForDopplerVelocityICP::
+                                   doppler_robust_loss_min_iteration_,
+                           "Minimum iterations after which Robust Kernel is "
+                           "used for the Doppler error")
+            .def_readwrite(
+                    "geometric_kernel",
+                    &TransformationEstimationForDopplerVelocityICP::geometric_kernel_,
+                    "Robust Kernel used in the Geometric Error Optimization")
+            .def_readwrite(
+                    "doppler_kernel",
+                    &TransformationEstimationForDopplerVelocityICP::doppler_kernel_,
+                    "Robust Kernel used in the Doppler Error Optimization");
     // open3d.registration.TransformationEstimationForGeneralizedICP:
     // TransformationEstimation
     py::class_<TransformationEstimationForGeneralizedICP,
@@ -697,7 +792,7 @@ static const std::unordered_map<std::string, std::string>
                  "(``TransformationEstimationPointToPoint``, "
                  "``TransformationEstimationPointToPlane``, "
                  "``TransformationEstimationForGeneralizedICP``, "
-                 "``TransformationEstimationForDopplerICP``, "
+                 "``TransformationEstimationForDopplerVelocityICP``, "
                  "``TransformationEstimationForColoredICP``)"},
                 {"init", "Initial transformation estimation"},
                 {"lambda_doppler", "lambda_doppler value"},

@@ -94,7 +94,7 @@ Eigen::Matrix4d TransformationEstimationForDopplerVelocityICP::ComputeTransforma
 //     const Eigen::Vector6d state_vector =
 //             utility::TransformMatrix4dToVector6d(transformation);
     const Eigen::Matrix3d R = transformation.block<3, 3>(0, 0);
-    const Eigen::Vector3d t = transformation.block<3, 1>(0, 3);
+    // const Eigen::Vector3d t = transformation.block<3, 1>(0, 3);
     // Accumulate JTJ/JTr by expanding each 3D residual into 3 scalar residuals.
 
 
