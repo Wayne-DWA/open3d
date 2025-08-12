@@ -59,44 +59,28 @@ Eigen::Matrix4d TransformationEstimationForDopplerVelocityICP::ComputeTransforma
 Eigen::Matrix4d TransformationEstimationForDopplerVelocityICP::ComputeTransformation(
         const geometry::PointCloud &source,
         const geometry::PointCloud &target,
-        const std::vector<Eigen::Vector3d> &source_directions,
-        const std::vector<Eigen::Vector3d> &target_directions,
         const CorrespondenceSet &corres,
-        const Eigen::Matrix4d &transformation,
         const size_t iteration) const {
     if (corres.empty()) {
         utility::LogError(
                 "No correspondences found between source and target "
                 "pointcloud.");
     }
-    // point to point ICP does not require normals
-//     if (!target.HasNormals()) {
-//         utility::LogError(
-//                 "DopplerVelocityICP requires target pointcloud to have normals.");
-//     }
+    if (!source.HasNormals() || !target.HasNormals() ||
+        source.normals_.size() != source.points_.size() ||
+        target.normals_.size() != target.points_.size()) {
+        utility::LogError("DopplerVelocityICP expects LOS directions in normals_ with same size as points_.");
+    }
     if (!source.HasDopplers() || !target.HasDopplers()) {
         utility::LogError("DopplerVelocityICP requires BOTH source and target to have Dopplers.");
     }
-    if (source_directions.size() != source.points_.size() ||
-        target_directions.size() != target.points_.size()) {
-        utility::LogError("Directions size mismatch: source/target directions must match point counts.");
-    }
-
-    // we don't use period in this method
-//     if (std::abs(period) < 1e-3) {
-//         utility::LogError("Time period too small.");
-//     }
 
     const double lambda_geometric = 1.0 - lambda_doppler_;
     const double sqrt_lambda_doppler = std::sqrt(lambda_doppler_);
     const double sqrt_lambda_geometric = std::sqrt(lambda_geometric);
 
-//     const Eigen::Vector6d state_vector =
-//             utility::TransformMatrix4dToVector6d(transformation);
-    const Eigen::Matrix3d R = transformation.block<3, 3>(0, 0);
-    // const Eigen::Vector3d t = transformation.block<3, 1>(0, 3);
+    // const Eigen::Matrix3d R = transformation.block<3, 3>(0, 0);
     // Accumulate JTJ/JTr by expanding each 3D residual into 3 scalar residuals.
-
 
     auto compute_jacobian_and_residual =
             [&](int i,
@@ -107,19 +91,14 @@ Eigen::Matrix4d TransformationEstimationForDopplerVelocityICP::ComputeTransforma
                 const Eigen::Vector3d &ps = source.points_[cs];
                 const Eigen::Vector3d &pt = target.points_[ct];
                 //source directions
-                const Eigen::Vector3d &us = source_directions[cs];
-                const Eigen::Vector3d &ut = target_directions[ct];
+                const Eigen::Vector3d &us = source.normals_[cs]; // rotated by Transform()
+                const Eigen::Vector3d &ut = target.normals_[ct];
                 const double &vs = source.dopplers_[cs];
                 const double &vt = target.dopplers_[ct];
 
                 J_r.resize(4);
                 r.resize(4);
                 w.resize(4);
-
-                // // Compute predicted Doppler velocity.
-                // const Eigen::Vector3d ds_in_S = R_S_to_V * ds_in_V;
-                // const double doppler_pred_in_S = -ds_in_S.dot(v_s_in_S);
-                // const double doppler_error = doppler_in_S - doppler_pred_in_S;
 
                 // Dynamic point outlier pruning of correspondences.
                 bool optimize{true};
@@ -132,17 +111,15 @@ Eigen::Matrix4d TransformationEstimationForDopplerVelocityICP::ComputeTransforma
                 if (optimize) {
                     // ---------- Geometric point-to-point: r_g = p' - q ----------
                     const Eigen::Vector3d rg = ps - pt;
-
-
                     const Eigen::Matrix3d Jg_rot = -utility::SkewMatrix(ps);; // d(p')/dδθ with left-multiplicative update
                     // ---- doppler scalar residual: r_v = u_q^T * R * (s_p*u_p) - s_q
                     const Eigen::Vector3d v_p  = vs * us;     // source LOS velocity vector
-                    const Eigen::Vector3d Rv_p = R * v_p;       // into target frame
-                    const double rv = ut.dot(Rv_p) - vt;      // scalar residual
+                    // const Eigen::Vector3d Rv_p = R * v_p;       // already in target frame
+                    const double rv = ut.dot(v_p) - vt;
                     // Jacobian wrt rotation: d(u_q^T R v)/dδθ = u_q^T ([δθ]_x R v) = (Rv × u_q)^T δθ
                     // const Eigen::Vector3d Jv_rot_vec = Rv_p.cross(ut);    // 3x1; as a 1x3 row later
 
-                    const Eigen::Vector3d Jv_rot_vec = utility::SkewMatrix(Rv_p) * ut;                // (Rv_p × ut)
+                    const Eigen::Vector3d Jv_rot_vec = v_p.cross(ut);             // (v_p × ut)
                     // ---- pack 4 scalar residuals: 3 geometric + 1 doppler
                     // geometric x/y/z
                     for (int k = 0; k < 3; ++k) {
@@ -190,18 +167,45 @@ double TransformationEstimationForDopplerVelocityICP::ComputeRMSE(
         const geometry::PointCloud &target,
         const CorrespondenceSet &corres) const {
     if (corres.empty()) return 0.0;
-    double err = 0.0;
+    // weights consistent with ComputeTransformation
+    const double lambda_geo = 1.0 - lambda_doppler_;
+    const double lambda_dop = lambda_doppler_;
+    const bool has_geo = true; // always have points
+    const bool has_doppler =
+        source.HasDopplers() && target.HasDopplers() &&
+        source.HasNormals()  && target.HasNormals()  &&
+        source.normals_.size() == source.points_.size() &&
+        target.normals_.size() == target.points_.size();
+    double sum_sq = 0.0;
+    const double N = static_cast<double>(corres.size());
     for (const auto &c : corres) {
-        err += (source.points_[c[0]] - target.points_[c[1]]).squaredNorm();
+        const size_t cs = static_cast<size_t>(c[0]);
+        const size_t ct = static_cast<size_t>(c[1]);
+
+        // geometric term: ||p_s - p_t||^2
+        if (has_geo) {
+            const Eigen::Vector3d rg = source.points_[cs] - target.points_[ct];
+            sum_sq += lambda_geo * rg.squaredNorm();
+        }
+        // doppler term: (u_t^T * (v_s * u_s) - v_t)^2
+        // NOTE: source is already transformed into target frame; normals (u_s) were rotated by Transform().
+        if (has_doppler) {
+            const Eigen::Vector3d &us = source.normals_[cs];  // assumed unit LOS of source (rotated)
+            const Eigen::Vector3d &ut = target.normals_[ct];  // unit LOS of target
+            const double vs = source.dopplers_[cs];
+            const double vt = target.dopplers_[ct];
+
+            const double rv = ut.dot(vs * us) - vt;
+            sum_sq += lambda_dop * (rv * rv);
+        }
     }
-    return std::sqrt(err / (double)corres.size());
+    // Divide by number of correspondences (Open3D style), then sqrt.
+    return std::sqrt(sum_sq / N);
 };
 
 RegistrationResult RegistrationDopplerVelocityICP(
         const geometry::PointCloud &source,
         const geometry::PointCloud &target,
-        const std::vector<Eigen::Vector3d> &source_directions,
-        const std::vector<Eigen::Vector3d> &target_directions,
         double max_correspondence_distance,
         const Eigen::Matrix4d &init /* = Eigen::Matrix4d::Identity()*/,
         const TransformationEstimationForDopplerVelocityICP &estimation,
@@ -210,14 +214,11 @@ RegistrationResult RegistrationDopplerVelocityICP(
         utility::LogError("Invalid max_correspondence_distance.");
     }
 
-    if ((estimation.GetTransformationEstimationType() ==
-         TransformationEstimationType::DopplerVelocityICP) &&
-        (!target.HasDopplers() || !source.HasDopplers())) {
+    if ((!target.HasDopplers() || !source.HasDopplers())) {
         utility::LogError(
                 "TransformationEstimationDopplerVelocityICP requires Doppler "
                 "velocities for source PointCloud and target PointCloud. ");
     }
-
     Eigen::Matrix4d transformation = init;
     geometry::KDTreeFlann kdtree;
     kdtree.SetGeometry(target);
@@ -233,12 +234,12 @@ RegistrationResult RegistrationDopplerVelocityICP(
     int i;
     bool converged{false};
     for (i = 0; i < criteria.max_iteration_; i++) {
-        utility::LogDebug("ICP Iteration #{:d}: Fitness {:.4f}, RMSE {:.4f}", i,
+        utility::LogDebug("Doppler Velocity ICP Iteration #{:d}: Fitness {:.4f}, RMSE {:.4f}", i,
                           result.fitness_, result.inlier_rmse_);
 
         // Compute the transform update.
         Eigen::Matrix4d update = estimation.ComputeTransformation(
-                pcd, target, source_directions, target_directions,result.correspondence_set_, transformation, i);
+                pcd, target,result.correspondence_set_, i);
         transformation = update * transformation;
         pcd.Transform(update);
 

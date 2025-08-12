@@ -22,6 +22,7 @@ target_sources(pipelines PRIVATE
     registration/CorrespondenceChecker.cpp
     registration/DopplerICP.cpp
     registration/DopplerVelocityICP.cpp
+    registration/DopplerGICP.cpp
     registration/FastGlobalRegistration.cpp
     registration/Feature.cpp
     registration/GeneralizedICP.cpp

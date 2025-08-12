@@ -34,6 +34,7 @@
 #include "open3d/pipelines/registration/CorrespondenceChecker.h"
 #include "open3d/pipelines/registration/DopplerICP.h"
 #include "open3d/pipelines/registration/DopplerVelocityICP.h"
+#include "open3d/pipelines/registration/DopplerGICP.h"
 #include "open3d/pipelines/registration/FastGlobalRegistration.h"
 #include "open3d/pipelines/registration/Feature.h"
 #include "open3d/pipelines/registration/GeneralizedICP.h"
@@ -431,10 +432,8 @@ Sets :math:`c = 1` if ``with_scaling`` is ``False``.
             .def("compute_transformation",
                  py::overload_cast<const geometry::PointCloud &,
                                    const geometry::PointCloud &,
-                                   const std::vector<Eigen::Vector3d> &,
-                                   const std::vector<Eigen::Vector3d> &,
                                    const CorrespondenceSet &,
-                                   const Eigen::Matrix4d &, const size_t>(
+                                   const size_t>(
                          &TransformationEstimationForDopplerVelocityICP::
                                  ComputeTransformation,
                          py::const_),
@@ -482,6 +481,62 @@ Sets :math:`c = 1` if ``with_scaling`` is ``False``.
             .def_readwrite(
                     "doppler_kernel",
                     &TransformationEstimationForDopplerVelocityICP::doppler_kernel_,
+                    "Robust Kernel used in the Doppler Error Optimization");
+    // open3d.registration.TransformationEstimationForDopplerGICP:
+    // TransformationEstimation
+    py::class_<
+            TransformationEstimationForDopplerGICP,
+            PyTransformationEstimation<TransformationEstimationForDopplerGICP>,
+            TransformationEstimation>
+            te_dgicp(m, "TransformationEstimationForDopplerGICP",
+                   "Class to estimate a transformation between two point "
+                   "clouds using Doppler velocity information");
+    py::detail::bind_default_constructor<TransformationEstimationForDopplerGICP>(
+            te_dgicp);
+    py::detail::bind_copy_functions<TransformationEstimationForDopplerGICP>(
+            te_dgicp);
+    te_dgicp.def(py::init([](double lambda_doppler, double sigma_v,
+                           std::shared_ptr<RobustKernel> geometric_kernel,
+                           std::shared_ptr<RobustKernel> doppler_kernel) {
+                   return new TransformationEstimationForDopplerGICP(
+                           lambda_doppler, sigma_v,
+                           std::move(geometric_kernel),
+                           std::move(doppler_kernel));
+               }),
+               "lambda_doppler"_a, "sigma_v"_a,
+               "geometric_kernel"_a, "doppler_kernel"_a)
+            .def(py::init([](double lambda_doppler) {
+                     return new TransformationEstimationForDopplerGICP(
+                             lambda_doppler);
+                 }),
+                 "lambda_doppler"_a)
+            .def("compute_transformation",
+                 py::overload_cast<const geometry::PointCloud &,
+                                   const geometry::PointCloud &,
+                                   const CorrespondenceSet &>(
+                         &TransformationEstimationForDopplerGICP::
+                                 ComputeTransformation,
+                         py::const_),
+                 "Compute transformation from source to target point cloud "
+                 "given correspondences.")
+            .def("__repr__",
+                 [](const TransformationEstimationForDopplerGICP &te) {
+                     return std::string(
+                                    "TransformationEstimationForDopplerGICP ") +
+                            ("with lambda_doppler=" +
+                             std::to_string(te.lambda_doppler_));
+                 })
+            .def_readwrite(
+                    "lambda_doppler",
+                    &TransformationEstimationForDopplerGICP::lambda_doppler_,
+                    "lambda_doppler")
+            .def_readwrite(
+                    "geometric_kernel",
+                    &TransformationEstimationForDopplerGICP::geometric_kernel_,
+                    "Robust Kernel used in the Geometric Error Optimization")
+            .def_readwrite(
+                    "doppler_kernel",
+                    &TransformationEstimationForDopplerGICP::doppler_kernel_,
                     "Robust Kernel used in the Doppler Error Optimization");
     // open3d.registration.TransformationEstimationForGeneralizedICP:
     // TransformationEstimation
@@ -793,6 +848,7 @@ static const std::unordered_map<std::string, std::string>
                  "``TransformationEstimationPointToPlane``, "
                  "``TransformationEstimationForGeneralizedICP``, "
                  "``TransformationEstimationForDopplerVelocityICP``, "
+                 "``TransformationEstimationForDopplerGICP``, "
                  "``TransformationEstimationForColoredICP``)"},
                 {"init", "Initial transformation estimation"},
                 {"lambda_doppler", "lambda_doppler value"},
@@ -875,13 +931,21 @@ void pybind_registration_methods(py::module &m) {
     m.def("registration_doppler_velocity_icp", &RegistrationDopplerVelocityICP,
           py::call_guard<py::gil_scoped_release>(),
           "Function for Doppler Velocity ICP registration", "source"_a, "target"_a,
-          "source_directions"_a, "target_directions"_a, "max_correspondence_distance"_a,
+          "max_correspondence_distance"_a,
           "init"_a = Eigen::Matrix4d::Identity(),
           "estimation_method"_a = TransformationEstimationForDopplerICP(0.99),
           "criteria"_a = ICPConvergenceCriteria());
     docstring::FunctionDocInject(m, "registration_doppler_velocity_icp",
                                  map_shared_argument_docstrings);
-
+    m.def("registration_doppler_gicp", &RegistrationDopplerGICP,
+          py::call_guard<py::gil_scoped_release>(),
+          "Function for Doppler GICP registration", "source"_a, "target"_a,
+          "max_correspondence_distance"_a,
+          "init"_a = Eigen::Matrix4d::Identity(),
+          "estimation_method"_a = TransformationEstimationForDopplerICP(0.99),
+          "criteria"_a = ICPConvergenceCriteria());
+    docstring::FunctionDocInject(m, "registration_doppler_gicp",
+                                 map_shared_argument_docstrings);
     m.def("registration_generalized_icp", &RegistrationGeneralizedICP,
           "Function for Generalized ICP registration", "source"_a, "target"_a,
           "max_correspondence_distance"_a,

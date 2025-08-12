@@ -79,6 +79,8 @@
 #include "open3d/pipelines/odometry/Odometry.h"
 #include "open3d/pipelines/registration/ColoredICP.h"
 #include "open3d/pipelines/registration/DopplerICP.h"
+#include "open3d/pipelines/registration/DopplerVelocityICP.h"
+#include "open3d/pipelines/registration/DopplerGICP.h"
 #include "open3d/pipelines/registration/FastGlobalRegistration.h"
 #include "open3d/pipelines/registration/Feature.h"
 #include "open3d/pipelines/registration/GeneralizedICP.h"

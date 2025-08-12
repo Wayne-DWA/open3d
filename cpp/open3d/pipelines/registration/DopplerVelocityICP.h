@@ -69,8 +69,7 @@ public:
           reject_dynamic_outliers_(reject_dynamic_outliers),
           doppler_outlier_threshold_(doppler_outlier_threshold),
           outlier_rejection_min_iteration_(outlier_rejection_min_iteration),
-          geometric_robust_loss_min_iteration_(
-                  geometric_robust_loss_min_iteration),
+          geometric_robust_loss_min_iteration_(geometric_robust_loss_min_iteration),
           doppler_robust_loss_min_iteration_(doppler_robust_loss_min_iteration),
           geometric_kernel_(std::move(geometric_kernel)),
           doppler_kernel_(std::move(doppler_kernel)) {
@@ -94,10 +93,7 @@ public:
     Eigen::Matrix4d ComputeTransformation(
             const geometry::PointCloud &source,
             const geometry::PointCloud &target,
-            const std::vector<Eigen::Vector3d> &source_directions,
-            const std::vector<Eigen::Vector3d> &target_directions,
             const CorrespondenceSet &corres,
-            const Eigen::Matrix4d &transformation,
             const size_t iteration) const;
 
 public:
@@ -150,8 +146,6 @@ private:
 RegistrationResult RegistrationDopplerVelocityICP(
         const geometry::PointCloud &source,
         const geometry::PointCloud &target,
-        const std::vector<Eigen::Vector3d> &source_directions,
-        const std::vector<Eigen::Vector3d> &target_directions,
         double max_correspondence_distance,
         const Eigen::Matrix4d &init = Eigen::Matrix4d::Identity(),
         const TransformationEstimationForDopplerVelocityICP &estimation =
