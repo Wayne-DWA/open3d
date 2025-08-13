@@ -113,16 +113,37 @@ namespace {
 //     return output;
 // }
 }  // namespace
-
 double TransformationEstimationForDopplerGICP::ComputeRMSE(
         const geometry::PointCloud &source,
         const geometry::PointCloud &target,
         const CorrespondenceSet &corres) const {
     if (corres.empty()) {
+        return 0.0;
+    }
+    double err = 0.0;
+    for (const auto &c : corres) {
+        const Eigen::Vector3d &vs = source.points_[c[0]];
+        const Eigen::Matrix3d &Cs = source.covariances_[c[0]];
+        const Eigen::Vector3d &vt = target.points_[c[1]];
+        const Eigen::Matrix3d &Ct = target.covariances_[c[1]];
+        const Eigen::Vector3d d = vs - vt;
+        const Eigen::Matrix3d M = Ct + Cs;
+        const Eigen::Matrix3d W = M.inverse().sqrt();
+        err += d.transpose() * W * d;
+    }
+    return std::sqrt(err / (double)corres.size());
+}
+void TransformationEstimationForDopplerGICP::ComputeDGICPRMSE(
+        const geometry::PointCloud &source,
+        const geometry::PointCloud &target,
+        const CorrespondenceSet &corres,
+        double &geometric_rmse_out,
+        double &doppler_rmse_out) const {
+    if (corres.empty()) {
         last_geometric_rmse_ = 0.0;
         last_doppler_rmse_ = 0.0;
         last_combined_rmse_ = 0.0;
-        return 0.0;
+        return;
     }
     double sum_g2 = 0.0;
     for (const auto &c : corres) {
@@ -145,7 +166,6 @@ double TransformationEstimationForDopplerGICP::ComputeRMSE(
                         source.HasDopplers() && target.HasDopplers();
 
     if (have_doppler) {
-        // const Eigen::Matrix3d &R = current_R_;
         for (const auto &c : corres) {
             const int is = c(0), it = c(1);
             const double sp = source.dopplers_[is];
@@ -163,8 +183,8 @@ double TransformationEstimationForDopplerGICP::ComputeRMSE(
     }
     // Combined RMSE consistent with optimization objective:
     // L = sum ||W r_g||^2 + lambda * sum (rv / sigma_v)^2
-    last_combined_rmse_ = std::sqrt((sum_g2 + lambda_doppler_ * sum_v2_norm) / N);
-    return last_combined_rmse_;
+    geometric_rmse_out = last_geometric_rmse_;
+    doppler_rmse_out   = last_doppler_rmse_;
 }
 
 
@@ -215,24 +235,44 @@ TransformationEstimationForDopplerGICP::ComputeTransformation(
                 const Vector3d  Rvp = ds * up;
                 const double rv  = uq.dot(Rvp) - dt;   // m/s
                 const Vector3d  Jv_rot_vec = Rvp.cross(uq); // 3x1
-                // Pack 4 scalar rows
-                constexpr int n_rows = 4;
-                J_r.resize(n_rows);
-                r.resize(n_rows);
-                w.resize(n_rows);
-                // Geometric rows 0..2
-                for (size_t i = 0; i < 3; ++i) {
-                    r[i] = rg_w(i);
-                    w[i] = geometric_kernel_ ? geometric_kernel_->Weight(r[i]) : 1.0;
-                    J_r[i] = J.row(i);
-                }
 
-                // Doppler row 3 (normalized + weighted)
-                r[3] = sqrt_lambda * inv_sigma * rv; // unitless
-                w[3] = doppler_kernel_ ? doppler_kernel_->Weight(r[3]) : 1.0;
-                Eigen::Vector6d Jv = Eigen::Vector6d::Zero();
-                Jv.head<3>() = sqrt_lambda * inv_sigma * Jv_rot_vec; // rotation only
-                J_r[3] = Jv;
+
+                // Dynamic point outlier pruning of correspondences.
+                bool optimize{true};
+                if (reject_dynamic_outliers_ &&
+                    std::abs(rv) > doppler_outlier_threshold_) {
+                    optimize = false;
+                }
+                if (optimize) {
+                    // Pack 4 scalar rows
+                    constexpr int n_rows = 4;
+                    J_r.resize(n_rows);
+                    r.resize(n_rows);
+                    w.resize(n_rows);
+                    // Geometric rows 0..2
+                    for (size_t i = 0; i < 3; ++i) {
+                        r[i] = rg_w(i);
+                        w[i] = geometric_kernel_ ? geometric_kernel_->Weight(r[i]) : 1.0;
+                        J_r[i] = J.row(i);
+                    }
+
+                    // Doppler row 3 (normalized + weighted)
+                    r[3] = sqrt_lambda * inv_sigma * rv; // unitless
+                    w[3] = doppler_kernel_ ? doppler_kernel_->Weight(r[3]) : 1.0;
+                    Eigen::Vector6d Jv = Eigen::Vector6d::Zero();
+                    Jv.head<3>() = sqrt_lambda * inv_sigma * Jv_rot_vec; // rotation only
+                    J_r[3] = Jv;
+                } else {
+                    // Fully zero-out all four rows when skipping this correspondence
+                    J_r.resize(4);
+                    r.resize(4);
+                    w.resize(4);
+                    for (int k = 0; k < 4; ++k) {
+                        J_r[k].setZero();
+                        r[k] = 0.0;
+                        w[k] = 0.0;
+                    }
+                }
             };
 
     Eigen::Matrix6d JTJ;
@@ -286,7 +326,9 @@ RegistrationResult RegistrationDopplerGICP(
     RegistrationResult result;
     result = GetRegistrationResultAndCorrespondences(
             pcd, target, kdtree, max_correspondence_distance, transformation);
-    result.inlier_rmse_ = estimation.ComputeRMSE(pcd, target, result.correspondence_set_);
+    double geo_rmse = 0.0, dop_rmse = 0.0;
+    estimation.ComputeDGICPRMSE(pcd, target, result.correspondence_set_, geo_rmse, dop_rmse);
+    result.inlier_rmse_ = geo_rmse + dop_rmse; // unitless (whitened)
     int i;
     bool converged{false};
     for (i = 0; i < criteria.max_iteration_; i++) {
@@ -304,8 +346,10 @@ RegistrationResult RegistrationDopplerGICP(
         result = GetRegistrationResultAndCorrespondences(
                 pcd, target, kdtree, max_correspondence_distance,
                 transformation);
-        result.inlier_rmse_ = estimation.ComputeRMSE(pcd, target, result.correspondence_set_);
-        
+        // double geo_rmse = 0.0, dop_rmse = 0.0;
+        estimation.ComputeDGICPRMSE(pcd, target, result.correspondence_set_, geo_rmse, dop_rmse);
+        result.inlier_rmse_ = geo_rmse + dop_rmse; // unitless (whitened)
+
         // Check for convergence.
         if (std::abs(backup.fitness_ - result.fitness_) <
                     criteria.relative_fitness_ &&
@@ -315,6 +359,11 @@ RegistrationResult RegistrationDopplerGICP(
             break;
         }
     }
+    // always print the result of geo and doppler
+    utility::LogInfo(
+            "Doppler-GICP converged: {:d} iterations, fitness {:.4f}, "
+            "inlier_rmse {:.4f}, geometric_rmse {:.4f}, doppler_rmse {:.4f}",
+            i, result.fitness_, result.inlier_rmse_, geo_rmse, dop_rmse);
 
     result.num_iterations_ = i;
     result.converged_ = converged;

@@ -57,12 +57,12 @@ class RegistrationResult;
 class TransformationEstimationForDopplerGICP
     : public TransformationEstimation {
 public:
-    ~TransformationEstimationForDopplerGICP() override = default;
+    ~TransformationEstimationForDopplerGICP() override{};
 
-    TransformationEstimationType GetTransformationEstimationType()
-            const override {
+    /// \brief Get the type of transformation estimation.
+    TransformationEstimationType GetTransformationEstimationType() const override {
         return type_;
-    };
+    }
     /// \brief Constructor.
     /// @param lambda_doppler  Weight for Doppler scalar residual (0..1 typical).
     /// @param sigma_v         Doppler noise std (m/s) used to normalize residuals.
@@ -71,10 +71,14 @@ public:
     explicit TransformationEstimationForDopplerGICP(
             double lambda_doppler = 0.5,
             double sigma_v = 0.15,
+            bool reject_dynamic_outliers = false,
+            double doppler_outlier_threshold = 2.0,
             std::shared_ptr<RobustKernel> geometric_kernel = std::make_shared<L2Loss>(),
             std::shared_ptr<RobustKernel> doppler_kernel   = std::make_shared<L2Loss>())
         : lambda_doppler_(lambda_doppler),
           sigma_v_(sigma_v),
+          reject_dynamic_outliers_(reject_dynamic_outliers),
+          doppler_outlier_threshold_(doppler_outlier_threshold),
           geometric_kernel_(std::move(geometric_kernel)),
           doppler_kernel_(std::move(doppler_kernel)) {}
 
@@ -84,12 +88,17 @@ public:
                        const geometry::PointCloud &target,
                        const CorrespondenceSet &corres) const override;
 
+    void ComputeDGICPRMSE(const geometry::PointCloud &source,
+                        const geometry::PointCloud &target,
+                        const CorrespondenceSet &corres,
+                        double &geometric_rmse_out,
+                        double &doppler_rmse_out) const;
     Eigen::Matrix4d ComputeTransformation(
             const geometry::PointCloud &source,
             const geometry::PointCloud &target,
             const CorrespondenceSet &corres) const override;
 
-    // Expose last computed RMSEs (updated by ComputeRMSE)
+    // Expose last computed RMSEs (updated by ComputeDGICPRMSE)
     mutable double last_geometric_rmse_ = 0.0;   // unitless (whitened)
     mutable double last_doppler_rmse_   = 0.0;   // m/s
     mutable double last_combined_rmse_  = 0.0;   // unitless (matches optimizer cost)
@@ -97,9 +106,12 @@ public:
     /// Small constant representing covariance along the normal.
     double epsilon_ = 1e-3;
     // Doppler term settings
-    double lambda_doppler_ = 0.5;
-    double sigma_v_ = 0.15;  // m/s
-
+    double lambda_doppler_{0.5};
+    double sigma_v_{0.15};  // m/s
+    bool reject_dynamic_outliers_{false};
+    /// Correspondences with Doppler error greater than this threshold are
+    /// rejected from optimization.
+    double doppler_outlier_threshold_{2.0};
     // Robust kernels
     std::shared_ptr<RobustKernel> geometric_kernel_ = std::make_shared<L2Loss>();
     std::shared_ptr<RobustKernel> doppler_kernel_   = std::make_shared<L2Loss>();
@@ -108,12 +120,6 @@ public:
 private:
     const TransformationEstimationType type_ =
             TransformationEstimationType::DopplerGICP;
-    // Context (mutable so we can update from const estimator refs)
-    mutable bool has_R_ = false;
-    mutable Eigen::Matrix3d current_R_ = Eigen::Matrix3d::Identity();
-    mutable const std::vector<Eigen::Vector3d>* src_dirs_ = nullptr;
-    mutable const std::vector<Eigen::Vector3d>* tgt_dirs_ = nullptr;
-
 };
 
 // ----------------------------------------------------------------------------
@@ -121,7 +127,8 @@ private:
 // ----------------------------------------------------------------------------
 // struct DopplerGICPResult {
 //     RegistrationResult result;   // ICP result (fitness / rmse / T)
-//     // double doppler_rmse = 0.0;   // Optional Doppler RMSE on final corres
+//     double doppler_rmse = 0.0;   // Optional Doppler RMSE on final corres
+//     double geometric_rmse = 0.0; // Optional Geometric RMSE on final corres
 // };
 ///
 /// \param source The source point cloud.

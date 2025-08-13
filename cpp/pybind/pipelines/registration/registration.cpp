@@ -496,14 +496,19 @@ Sets :math:`c = 1` if ``with_scaling`` is ``False``.
     py::detail::bind_copy_functions<TransformationEstimationForDopplerGICP>(
             te_dgicp);
     te_dgicp.def(py::init([](double lambda_doppler, double sigma_v,
+                           bool reject_dynamic_outliers,
+                           double doppler_outlier_threshold,
                            std::shared_ptr<RobustKernel> geometric_kernel,
                            std::shared_ptr<RobustKernel> doppler_kernel) {
                    return new TransformationEstimationForDopplerGICP(
                            lambda_doppler, sigma_v,
+                           reject_dynamic_outliers, doppler_outlier_threshold,  
                            std::move(geometric_kernel),
                            std::move(doppler_kernel));
                }),
-               "lambda_doppler"_a, "sigma_v"_a,
+               "lambda_doppler"_a, "sigma_v"_a, 
+               "reject_dynamic_outliers"_a,
+               "doppler_outlier_threshold"_a,
                "geometric_kernel"_a, "doppler_kernel"_a)
             .def(py::init([](double lambda_doppler) {
                      return new TransformationEstimationForDopplerGICP(
@@ -530,6 +535,16 @@ Sets :math:`c = 1` if ``with_scaling`` is ``False``.
                     "lambda_doppler",
                     &TransformationEstimationForDopplerGICP::lambda_doppler_,
                     "lambda_doppler")
+            .def_readwrite("sigma_v",
+                        &TransformationEstimationForDopplerGICP::sigma_v_,
+                        "sigma_v")
+            .def_readwrite("reject_dynamic_outliers",
+                        &TransformationEstimationForDopplerGICP::reject_dynamic_outliers_,
+                        "Performs dynamic point outlier rejection of "
+                        "correspondences")
+            .def_readwrite("doppler_outlier_threshold",
+                        &TransformationEstimationForDopplerGICP::doppler_outlier_threshold_,
+                        "doppler_outlier_threshold")
             .def_readwrite(
                     "geometric_kernel",
                     &TransformationEstimationForDopplerGICP::geometric_kernel_,
@@ -933,7 +948,7 @@ void pybind_registration_methods(py::module &m) {
           "Function for Doppler Velocity ICP registration", "source"_a, "target"_a,
           "max_correspondence_distance"_a,
           "init"_a = Eigen::Matrix4d::Identity(),
-          "estimation_method"_a = TransformationEstimationForDopplerICP(0.99),
+          "estimation_method"_a = TransformationEstimationForDopplerVelocityICP(0.5),
           "criteria"_a = ICPConvergenceCriteria());
     docstring::FunctionDocInject(m, "registration_doppler_velocity_icp",
                                  map_shared_argument_docstrings);
@@ -942,7 +957,7 @@ void pybind_registration_methods(py::module &m) {
           "Function for Doppler GICP registration", "source"_a, "target"_a,
           "max_correspondence_distance"_a,
           "init"_a = Eigen::Matrix4d::Identity(),
-          "estimation_method"_a = TransformationEstimationForDopplerICP(0.99),
+          "estimation_method"_a = TransformationEstimationForDopplerGICP(0.5),
           "criteria"_a = ICPConvergenceCriteria());
     docstring::FunctionDocInject(m, "registration_doppler_gicp",
                                  map_shared_argument_docstrings);

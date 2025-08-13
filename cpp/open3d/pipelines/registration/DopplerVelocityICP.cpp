@@ -95,27 +95,27 @@ Eigen::Matrix4d TransformationEstimationForDopplerVelocityICP::ComputeTransforma
                 const Eigen::Vector3d &ut = target.normals_[ct];
                 const double &vs = source.dopplers_[cs];
                 const double &vt = target.dopplers_[ct];
-
+                // ---------- Geometric point-to-point: r_g = p' - q ----------
+                const Eigen::Vector3d rg = ps - pt;
+                const Eigen::Matrix3d Jg_rot = -utility::SkewMatrix(ps);; // d(p')/dδθ with left-multiplicative update
+                // ---- doppler scalar residual: r_v = u_q^T * R * (s_p*u_p) - s_q
+                const Eigen::Vector3d v_p  = vs * us;     // source LOS velocity vector
+                // const Eigen::Vector3d Rv_p = R * v_p;       // already in target frame
+                const double rv = ut.dot(v_p) - vt;
                 J_r.resize(4);
                 r.resize(4);
                 w.resize(4);
 
                 // Dynamic point outlier pruning of correspondences.
                 bool optimize{true};
-                // if (reject_dynamic_outliers_ &&
-                //     iteration >= outlier_rejection_min_iteration_ &&
-                //     std::abs(doppler_error) > doppler_outlier_threshold_) {
-                //     optimize = false;
-                // }
+                if (reject_dynamic_outliers_ &&
+                    iteration >= outlier_rejection_min_iteration_ &&
+                    std::abs(rv) > doppler_outlier_threshold_) {
+                    optimize = false;
+                }
 
                 if (optimize) {
-                    // ---------- Geometric point-to-point: r_g = p' - q ----------
-                    const Eigen::Vector3d rg = ps - pt;
-                    const Eigen::Matrix3d Jg_rot = -utility::SkewMatrix(ps);; // d(p')/dδθ with left-multiplicative update
-                    // ---- doppler scalar residual: r_v = u_q^T * R * (s_p*u_p) - s_q
-                    const Eigen::Vector3d v_p  = vs * us;     // source LOS velocity vector
-                    // const Eigen::Vector3d Rv_p = R * v_p;       // already in target frame
-                    const double rv = ut.dot(v_p) - vt;
+
                     // Jacobian wrt rotation: d(u_q^T R v)/dδθ = u_q^T ([δθ]_x R v) = (Rv × u_q)^T δθ
                     // const Eigen::Vector3d Jv_rot_vec = Rv_p.cross(ut);    // 3x1; as a 1x3 row later
 
@@ -128,7 +128,9 @@ Eigen::Matrix4d TransformationEstimationForDopplerVelocityICP::ComputeTransforma
                        Jgk.segment<3>(3) = sqrt_lambda_geometric * Eigen::Vector3d::Unit(k);    // translation block
                        J_r[k] = Jgk;
                        r[k]   = sqrt_lambda_geometric * rg(k);
-                       w[k]   = 1.0;  // or robust weight for geometric
+                       w[k]   = (iteration >= doppler_robust_loss_min_iteration_)
+                                   ? doppler_kernel_->Weight(r[k])
+                                   : default_kernel_->Weight(r[k]);
                     }
                     // doppler scalar (scaled by sqrt(lambda))
                     Eigen::Vector6d Jvk = Eigen::Vector6d::Zero();
@@ -136,8 +138,12 @@ Eigen::Matrix4d TransformationEstimationForDopplerVelocityICP::ComputeTransforma
                     // translation block remains zero
                     J_r[3] = Jvk;
                     r[3]   = sqrt_lambda_doppler * rv;
-                    w[3]   = 1.0;  // or robust weight for Doppler
-                } else {
+                    w[3]   = (iteration >= doppler_robust_loss_min_iteration_)
+                                   ? doppler_kernel_->Weight(r[3])
+                                   : default_kernel_->Weight(r[3]);
+                } 
+                else 
+                {
                     // Fully zero-out all four rows when skipping this correspondence
                     for (int k = 0; k < 4; ++k) {
                         J_r[k].setZero();
