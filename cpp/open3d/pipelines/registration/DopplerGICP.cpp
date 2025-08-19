@@ -360,7 +360,7 @@ RegistrationResult RegistrationDopplerGICP(
         }
     }
     // always print the result of geo and doppler
-    utility::LogInfo(
+    utility::LogDebug(
             "Doppler-GICP converged: {:d} iterations, fitness {:.4f}, "
             "inlier_rmse {:.4f}, geometric_rmse {:.4f}, doppler_rmse {:.4f}",
             i, result.fitness_, result.inlier_rmse_, geo_rmse, dop_rmse);
