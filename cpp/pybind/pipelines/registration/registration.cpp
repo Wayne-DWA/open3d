@@ -35,6 +35,7 @@
 #include "open3d/pipelines/registration/DopplerICP.h"
 #include "open3d/pipelines/registration/DopplerVelocityICP.h"
 #include "open3d/pipelines/registration/DopplerGICP.h"
+#include "open3d/pipelines/registration/DopplerPt2PlaneICP.h"
 #include "open3d/pipelines/registration/FastGlobalRegistration.h"
 #include "open3d/pipelines/registration/Feature.h"
 #include "open3d/pipelines/registration/GeneralizedICP.h"
@@ -553,6 +554,81 @@ Sets :math:`c = 1` if ``with_scaling`` is ``False``.
                     "doppler_kernel",
                     &TransformationEstimationForDopplerGICP::doppler_kernel_,
                     "Robust Kernel used in the Doppler Error Optimization");
+    // open3d.registration.TransformationEstimationForDopplerPt2PlaneICP:
+    // TransformationEstimation
+    py::class_<
+            TransformationEstimationForDopplerPt2PlaneICP,
+            PyTransformationEstimation<TransformationEstimationForDopplerPt2PlaneICP>,
+            TransformationEstimation>
+            te_dppl(m, "TransformationEstimationForDopplerPt2PlaneICP",
+                   "Class to estimate a transformation between two point "
+                   "clouds using Doppler velocity information");
+    py::detail::bind_default_constructor<TransformationEstimationForDopplerPt2PlaneICP>(
+            te_dppl);
+    py::detail::bind_copy_functions<TransformationEstimationForDopplerPt2PlaneICP>(
+            te_dppl);
+    te_dppl.def(py::init([](double lambda_doppler, double sigma_v,
+                           size_t geometric_robust_loss_min_iteration,
+                           size_t doppler_robust_loss_min_iteration,
+                           std::shared_ptr<RobustKernel> geometric_kernel,
+                           std::shared_ptr<RobustKernel> doppler_kernel) {
+                   return new TransformationEstimationForDopplerPt2PlaneICP(
+                           lambda_doppler, sigma_v,
+                           geometric_robust_loss_min_iteration,
+                           doppler_robust_loss_min_iteration,
+                           std::move(geometric_kernel),
+                           std::move(doppler_kernel));
+               }),
+               "lambda_doppler"_a, "sigma_v"_a, 
+                "geometric_robust_loss_min_iteration"_a,
+               "doppler_robust_loss_min_iteration"_a, 
+               "geometric_kernel"_a, "doppler_kernel"_a)
+            .def(py::init([](double lambda_doppler) {
+                     return new TransformationEstimationForDopplerPt2PlaneICP(
+                             lambda_doppler);
+                 }),
+                 "lambda_doppler"_a)
+            .def("compute_transformation",
+                 py::overload_cast<const geometry::PointCloud &,
+                                   const geometry::PointCloud &,
+                                   const CorrespondenceSet &,
+                                   const std::vector<Eigen::Vector3d>&,
+                                   const std::vector<Eigen::Vector3d>&,
+                                   const double, const Eigen::Matrix4d &,
+                                   const size_t>(
+                         &TransformationEstimationForDopplerPt2PlaneICP::
+                                 ComputeTransformation,
+                         py::const_),
+                 "Compute transformation from source to target point cloud "
+                 "given correspondences.")
+            .def("__repr__",
+                 [](const TransformationEstimationForDopplerPt2PlaneICP &te) {
+                     return std::string(
+                                    "TransformationEstimationForDopplerPt2PlaneICP ") +
+                            ("with lambda_doppler=" +
+                             std::to_string(te.lambda_doppler_));
+                 })
+            .def_readwrite(
+                    "lambda_doppler",
+                    &TransformationEstimationForDopplerPt2PlaneICP::lambda_doppler_,
+                    "lambda_doppler")
+            .def_readwrite("sigma_v",
+                        &TransformationEstimationForDopplerPt2PlaneICP::sigma_v_,
+                        "sigma_v")
+            .def_readwrite("geometric_robust_loss_min_iteration",
+                        &TransformationEstimationForDopplerPt2PlaneICP::geometric_robust_loss_min_iteration_,
+                        "Minimum iterations for geometric robust loss")
+            .def_readwrite("doppler_robust_loss_min_iteration",
+                        &TransformationEstimationForDopplerPt2PlaneICP::doppler_robust_loss_min_iteration_,
+                        "Minimum iterations for doppler robust loss")
+            .def_readwrite(
+                    "geometric_kernel",
+                    &TransformationEstimationForDopplerPt2PlaneICP::geometric_kernel_,
+                    "Robust Kernel used in the Geometric Error Optimization")
+            .def_readwrite(
+                    "doppler_kernel",
+                    &TransformationEstimationForDopplerPt2PlaneICP::doppler_kernel_,
+                    "Robust Kernel used in the Doppler Error Optimization");
     // open3d.registration.TransformationEstimationForGeneralizedICP:
     // TransformationEstimation
     py::class_<TransformationEstimationForGeneralizedICP,
@@ -864,7 +940,8 @@ static const std::unordered_map<std::string, std::string>
                  "``TransformationEstimationForGeneralizedICP``, "
                  "``TransformationEstimationForDopplerVelocityICP``, "
                  "``TransformationEstimationForDopplerGICP``, "
-                 "``TransformationEstimationForColoredICP``)"},
+                 "``TransformationEstimationForColoredICP``. "
+                 "``TransformationEstimationForDopplerPt2PlaneICP``)"},
                 {"init", "Initial transformation estimation"},
                 {"lambda_doppler", "lambda_doppler value"},
                 {"lambda_geometric", "lambda_geometric value"},
@@ -960,6 +1037,18 @@ void pybind_registration_methods(py::module &m) {
           "estimation_method"_a = TransformationEstimationForDopplerGICP(0.5),
           "criteria"_a = ICPConvergenceCriteria());
     docstring::FunctionDocInject(m, "registration_doppler_gicp",
+                                 map_shared_argument_docstrings);
+    m.def("registration_doppler_pt2plane_icp", &RegistrationDopplerPt2PlaneICP,
+          py::call_guard<py::gil_scoped_release>(),
+          "Function for Doppler Pt2Plane ICP registration", "source"_a, "target"_a,
+          "source_directions"_a,
+          "target_directions"_a,
+          "max_correspondence_distance"_a,
+          "init"_a = Eigen::Matrix4d::Identity(),
+          "estimation_method"_a = TransformationEstimationForDopplerPt2PlaneICP(0.5),
+          "criteria"_a = ICPConvergenceCriteria(),
+          "period"_a = 0.1F);
+    docstring::FunctionDocInject(m, "registration_doppler_pt2plane_icp",
                                  map_shared_argument_docstrings);
     m.def("registration_generalized_icp", &RegistrationGeneralizedICP,
           "Function for Generalized ICP registration", "source"_a, "target"_a,

@@ -23,6 +23,7 @@ target_sources(pipelines PRIVATE
     registration/DopplerICP.cpp
     registration/DopplerVelocityICP.cpp
     registration/DopplerGICP.cpp
+    registration/DopplerPt2PlaneICP.cpp
     registration/FastGlobalRegistration.cpp
     registration/Feature.cpp
     registration/GeneralizedICP.cpp
