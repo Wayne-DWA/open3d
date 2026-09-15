@@ -47,14 +47,17 @@ Eigen::Matrix4d TransformationEstimationForDopplerPt2PlaneICP::ComputeTransforma
         const double period,
         const Matrix4d& transformation,
         const size_t iteration) const {
-    if (corres.empty()) {
-        utility::LogError("No correspondences found between source and target pointcloud.");
+    if (corres.size() < 6) {
+        utility::LogError("Doppler Pt2Plane ICP: insufficient_correspondences");
     }
     if (!target.HasNormals()) {
         utility::LogError("Doppler Pt2Plane ICP requires target normals.");
     }
     if (!source.HasDopplers()) {
         utility::LogError("Doppler Pt2Plane ICP requires source dopplers.");
+    }
+    if (!target.HasDopplers()) {
+        utility::LogError("Doppler Pt2Plane ICP requires target dopplers.");
     }
     if (source_dirs.size() != source.points_.size() ||
         target_dirs.size() != target.points_.size()) {
@@ -65,8 +68,8 @@ Eigen::Matrix4d TransformationEstimationForDopplerPt2PlaneICP::ComputeTransforma
     const double sqrt_lambda_v = std::sqrt(lambda_doppler_);
     const double sqrt_lambda_g = std::sqrt(lambda_g);
 
-    // Small-angle state (not explicitly used here, kept for completeness)
-    (void)transformation; // current T, if needed
+    // LOS inputs remain in the original source frame. Apply the current R.
+    const Matrix3d rotation = transformation.block<3, 3>(0, 0);
 
     auto compute_jacobian_and_residual =
             [&](int i,
@@ -90,7 +93,7 @@ Eigen::Matrix4d TransformationEstimationForDopplerPt2PlaneICP::ComputeTransforma
                 // Dynamic: r_g = n^T (ps - pt + alpha_p u_p + alpha_q u_q)
                 const Vector3d d = ps - pt;
                 // Doppler scalar residual (small-angle; R ≈ I inside one iteration)
-                const Vector3d Rvp = sp * up; // LOS velocity mapped to target frame
+                const Vector3d Rvp = rotation * (sp * up); // Eq. (13)
                 const double rv = uq.dot(Rvp) - sq; // m/s
                 const Vector3d Jv_rot_vec = Rvp.cross(uq); // d/d(delta_theta)
                 const int n_rows = 2;
@@ -101,7 +104,7 @@ Eigen::Matrix4d TransformationEstimationForDopplerPt2PlaneICP::ComputeTransforma
                 // r_g = sqrt_lambda_g * n^T d_dyn
                 const double rg = sqrt_lambda_g * nt.dot(d);
                 // J_g wrt rotation using cross: d/dδθ [ n^T (δθ × ps + α_p δθ × u_p) ] = (ps × n + α_p u_p × n)^T
-                Vector3d rot_geo = ps.cross(nt);
+                Vector3d rot_geo = (ps - transformation.block<3, 1>(0, 3)).cross(nt);
                 // Compose 6-d row Jacobian (rotation first, then translation)
                 Vector6d Jg = Vector6d::Zero();
 
@@ -110,99 +113,18 @@ Eigen::Matrix4d TransformationEstimationForDopplerPt2PlaneICP::ComputeTransforma
                 J_r[0] = Jg;
                 r[0]   = rg;
                 w[0]   = (iteration >= geometric_robust_loss_min_iteration_) ?
-                            geometric_kernel_->Weight(r[0]) : 1.0;
+                            geometric_kernel_->Weight(nt.dot(d)) : 1.0;
 
                 // Doppler scalar residual (normalized) and Jacobian
                 const double rv_n = (sigma_v_ > 0.0 ? rv / sigma_v_ : rv);
                 r[1] = sqrt_lambda_v * rv_n;
                 w[1] = (iteration >= doppler_robust_loss_min_iteration_) ?
-                            doppler_kernel_->Weight(r[1]) : 1.0;
+                            doppler_kernel_->Weight(rv_n) : 1.0;
                 Vector6d Jv = Vector6d::Zero();
                 Jv.head<3>() = sqrt_lambda_v * (sigma_v_ > 0.0 ? (Jv_rot_vec / sigma_v_) : Jv_rot_vec);
                 // no translation effect
                 J_r[1] = Jv;
 
-                // Ego-motion compensation for Doppler gating and dynamic prediction
-                // const double sp_comp = sp + up.dot(v_sensor_src_);
-                // const double sq_comp = sq + uq.dot(v_sensor_tgt_);
-
-                // Doppler scalar residual (small-angle; R ≈ I inside one iteration)
-                // const Vector3d Rvp = sp_comp * up; // LOS velocity mapped to target frame
-                // const double rv = uq.dot(Rvp) - sq_comp; // m/s
-                // const Vector3d Jv_rot_vec = Rvp.cross(uq); // d/d(delta_theta)
-
-                // Dynamic gating
-                // const double gate = (k_dynamic_gate_ > 0.0 && sigma_v_ > 0.0)
-                //                         ? (k_dynamic_gate_ * sigma_v_)
-                //                         : doppler_outlier_threshold_;
-                // const bool is_dynamic = enable_dynamic_compensation_ && (std::abs(rv) > gate);
-
-                // // Reserve rows: 1 (geom) + 1 (doppler) + optional 3 (perp)
-                // const bool use_perp = (beta_perp_ > 0.0);
-                // const int n_rows = use_perp ? 5 : 2;
-                // J_r.resize(n_rows);
-                // r.resize(n_rows);
-                // w.resize(n_rows);
-
-                // // Geometric Jacobian, static or dynamic
-                // Vector3d d_dyn = d;
-                // if (is_dynamic) {
-                //     const double alpha_p = sp_comp * period;
-                //     const double alpha_q = sq_comp * period;
-                //     d_dyn = d + alpha_p * up + alpha_q * uq;
-                // }
-                // // r_g = sqrt_lambda_g * n^T d_dyn
-                // const double rg = sqrt_lambda_g * nt.dot(d_dyn);
-                // // J_g wrt rotation: sqrt_lambda_g * n^T ( -[ps]_x - alpha_p [u_p]_x )
-                // Vector3d rot_geo = ps.cross(nt); // because n^T (-[ps]_x) = ( -[ps]_x^T n )^T; we store row later
-                // if (is_dynamic) {
-                //     const double alpha_p = sp_comp * period;
-                //     rot_geo += alpha_p * up.cross(nt);
-                // }
-                // // Compose 6-d row Jacobian (rotation first, then translation)
-                // Vector6d Jg = Vector6d::Zero();
-                // Jg.head<3>() = sqrt_lambda_g * rot_geo; // note: we treat row via vector; Open3D expects per-row packing
-                // Jg.tail<3>() = sqrt_lambda_g * nt;       // d/dt: n^T * I
-                // J_r[0] = Jg;
-                // r[0]   = rg;
-                // w[0]   = (iteration >= geometric_robust_loss_min_iteration_) ?
-                //             geometric_kernel_->Weight(r[0]) : 1.0;
-
-                // // Doppler scalar residual (normalized) and Jacobian
-                // const double rv_n = (sigma_v_ > 0.0 ? rv / sigma_v_ : rv);
-                // r[1] = sqrt_lambda_v * rv_n;
-                // w[1] = (iteration >= doppler_robust_loss_min_iteration_) ?
-                //             doppler_kernel_->Weight(r[1]) : 1.0;
-                // Vector6d Jv = Vector6d::Zero();
-                // Jv.head<3>() = sqrt_lambda_v * (sigma_v_ > 0.0 ? (Jv_rot_vec / sigma_v_) : Jv_rot_vec);
-                // // no translation effect
-                // J_r[1] = Jv;
-
-                // if (use_perp) {
-                //     // Ray-perpendicular geometric consistency
-                //     // r_perp = sqrt(beta) * P * d_dyn, where P = I - u_q u_q^T
-                //     const Matrix3d P = Matrix3d::Identity() - uq * uq.transpose();
-                //     const Vector3d rP = P * d_dyn;
-                //     const double sqrt_beta = std::sqrt(beta_perp_);
-                //     // Build rotation rows using cross only:
-                //     // For each component i, row rotation part a_i^T = sqrt_beta * ( ps × v + α_p u_p × v )^T, where v = P.col(i)
-                //     // Translation part is sqrt_beta * P.row(i)
-                //     const double alpha_p = is_dynamic ? (sp_comp * period) : 0.0;
-                //     const Vector3d m = ps + alpha_p * up;
-                //     for (int k = 0; k < 3; ++k) {
-                //         const Vector3d v = P.col(k);
-                //         Vector6d row = Vector6d::Zero();
-                //         // rotation (1x3): (ps × v + α_p u_p × v)^T
-                //         Vector3d a_rot = ps.cross(v);
-                //         if (alpha_p != 0.0) a_rot += alpha_p * up.cross(v);
-                //         row.head<3>() = sqrt_beta * a_rot;
-                //         // translation (1x3): P.row(k)
-                //         row.tail<3>() = sqrt_beta * P.row(k).transpose();
-                //         J_r[2 + k] = row;
-                //         r[2 + k]   = sqrt_beta * rP(k);
-                //         w[2 + k]   = geometric_kernel_ ? geometric_kernel_->Weight(r[2 + k]) : 1.0;
-                //     }
-                // }
             };
 
     Eigen::Matrix<double, 6, 6> JTJ;
@@ -212,12 +134,38 @@ Eigen::Matrix4d TransformationEstimationForDopplerPt2PlaneICP::ComputeTransforma
             utility::ComputeJTJandJTr<Eigen::Matrix<double,6,6>, Eigen::Vector6d>(
                     compute_jacobian_and_residual, static_cast<int>(corres.size()));
 
-    bool is_success = false;
-    Matrix4d extrinsic;
-    std::tie(is_success, extrinsic) =
-            utility::SolveJacobianSystemAndObtainExtrinsicMatrix(JTJ, JTr);
+    if (ego_translation_weight_ > 0.0) {
+        const Vector3d t = transformation.block<3, 1>(0, 3);
+        const Vector3d residual = rotation.transpose() * t + displacement_prior_;
+        Matrix3d t_cross;
+        t_cross << 0.0, -t.z(), t.y(), t.z(), 0.0, -t.x(), -t.y(), t.x(), 0.0;
+        Eigen::Matrix<double, 3, 6> J;
+        J.leftCols<3>() = rotation.transpose() * t_cross;
+        J.rightCols<3>() = rotation.transpose();
+        const Matrix3d W = ego_translation_weight_ * double(corres.size()) * translation_information_;
+        JTJ.noalias() += J.transpose() * W * J;
+        JTr.noalias() += J.transpose() * W * residual;
+    }
 
-    return is_success ? extrinsic : Matrix4d::Identity();
+    // A singular solve must not become an identity update reported as convergence.
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>> spectrum(JTJ);
+    if (spectrum.info() != Eigen::Success ||
+        spectrum.eigenvalues().minCoeff() <= 1e-12 * spectrum.eigenvalues().maxCoeff()) {
+        utility::LogError("Doppler Pt2Plane ICP: degenerate_system");
+    }
+    const Vector6d delta = -JTJ.ldlt().solve(JTr);
+    if (!delta.allFinite()) {
+        utility::LogError("Doppler Pt2Plane ICP: nonfinite update");
+    }
+    const double angle = delta.head<3>().norm();
+    Matrix3d dR = Matrix3d::Identity();
+    if (angle > 1e-15) dR = Eigen::AngleAxisd(angle, delta.head<3>() / angle).toRotationMatrix();
+    // Return a left-composable transform, implementing additive target-frame t.
+    const Vector3d t = transformation.block<3, 1>(0, 3);
+    Matrix4d update = Matrix4d::Identity();
+    update.block<3, 3>(0, 0) = dR;
+    update.block<3, 1>(0, 3) = t + delta.tail<3>() - dR * t;
+    return update;
 }
 
 // Standard RMSE: geometric point-to-plane only (for Open3D metrics)
@@ -290,6 +238,9 @@ RegistrationResult RegistrationDopplerPt2PlaneICP(
                 pcd, target, kdtree, max_correspondence_distance,
                 transformation);
 
+        if (result.correspondence_set_.size() < 6) {
+            utility::LogError("Doppler Pt2Plane ICP: insufficient_correspondences after update");
+        }
         if (std::abs(backup.fitness_ - result.fitness_) < criteria.relative_fitness_ &&
             std::abs(backup.inlier_rmse_ - result.inlier_rmse_) < criteria.relative_rmse_) {
             converged = true;
@@ -297,7 +248,7 @@ RegistrationResult RegistrationDopplerPt2PlaneICP(
         }
     }
 
-    result.num_iterations_ = i;
+    result.num_iterations_ = converged ? i + 1 : i;
     result.converged_ = converged;
     return result;
 }

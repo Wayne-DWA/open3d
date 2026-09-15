@@ -66,6 +66,11 @@ public:  // API
                        const CorrespondenceSet& corres) const override;
 
 public:  // visible knobs
+    // Optional displacement prior from Doppler ego velocity, in source frame.
+    // Zero preserves the paper's two-term objective.
+    double ego_translation_weight_ = 0.0;
+    Eigen::Vector3d displacement_prior_ = Eigen::Vector3d::Zero();
+    Eigen::Matrix3d translation_information_ = Eigen::Matrix3d::Identity();
     double lambda_doppler_ = 0.01;  // Doppler weight; geometric weight = 1 - lambda
     double sigma_v_ = 0.15;        // Doppler std (m/s)
     size_t geometric_robust_loss_min_iteration_{0};
